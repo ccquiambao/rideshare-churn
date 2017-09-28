@@ -99,17 +99,12 @@ if __name__ == '__main__':
     rideshare_df = df_preprocessing(rideshare_df)
     y = rideshare_df.pop('Churned')
     X = rideshare_df
-    rating_dict = {'avg_rating_by_driver': 0.,
-                   'avg_rating_of_driver': 0.}
-    for col in rating_dict.iterkeys():
-        rating_dict[col] = X[col].mean()
 
-    X.columns
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
     X_train.reset_index(drop=True, inplace=True)
     y_train.reset_index(drop=True, inplace=True)
 
-    X_train.head()
+    X_train.columns
     pipe = Pipeline([
             ('ratings', RatingsImputer()),
             ('scaler', StandardScaler()),
@@ -119,18 +114,10 @@ if __name__ == '__main__':
     scores = []
     kf = KFold(n_splits=5, random_state=42)
     for train_index, val_index in kf.split(X_train):
-        print train_index.shape
-        print val_index.shape
         cv_X = X_train.copy()
         cv_y = y_train.copy()
-        X_t, X_v = cv.iloc[train_index, :], cv.iloc[val_index, :]
+        X_t, X_v = cv_X.iloc[train_index, :], cv_X.iloc[val_index, :]
         y_t, y_v = cv_y[train_index], cv_y[val_index]
         pipe.fit(X_t, y_t)
         score = pipe.score(X_v, y_v)
         scores.append(score)
-
-
-    # train simple model
-    logit = LogisticRegression()
-    logit.fit(X_train, y_train)
-    logit.score(X_test, y_test)
