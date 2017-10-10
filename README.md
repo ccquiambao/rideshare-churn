@@ -1,2 +1,2 @@
 # rideshare-churn
-Exploring rideshare data and creating predictive models around user churn
+Exploring rideshare data with goals of predicting and understanding user churn
