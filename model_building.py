@@ -9,7 +9,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from collections import defaultdict
 import matplotlib.pyplot as plt
-
+from sklearn.metrics import f1_score
 
 def df_target_creation(df):
     '''
@@ -114,9 +114,49 @@ class FeatureSelector(BaseEstimator, TransformerMixin):
             self.columns = X
             return X
 
+def grid_search(pipe, penalties, c_vals, feature_sets):
+    '''
+    INPUT: pipe, full Pipeline Class
+            penalties, c_vals, feature_sets, lists
+
+    OUTPUT: (best model parameters, score), tuple
+
+    '''
+
+    scores_dict = dict()
+    kf = KFold(n_splits=5, random_state=42)
+    for feature_set in feature_sets:
+        for penalty in penalties:
+            for c in c_vals:
+
+                pipe.named_steps['logit'].set_params(penalty=penalty)
+                pipe.named_steps['logit'].set_params(C=c)
+
+                key = (penalty, c, tuple(feature_set))
+                print key
+                counter = 0
+                scores = []
+
+                for train_index, val_index in kf.split(X_train):
+                    counter += 1
+                    print counter
+                    train_set = X_train.loc[:, feature_set].copy()
+                    X_t, X_v = (train_set.iloc[train_index, :],
+                                train_set.iloc[val_index, :])
+                    y_t, y_v = y_train[train_index], y_train[val_index]
+
+                    pipe.fit(X_t, y_t)
+                    predicts = pipe.predict(X_v)
+                    score = f1_score(y_true=y_v, y_pred=predicts)
+                    scores.append(score)
+
+                scores_dict[key] = np.mean(score)
+
+        return sorted(scores_dict.items())[-3:]
+
 def lasso_feature_selection(pipe):
     '''
-    INPUT: pipeline class
+    INPUT: pipeline class, training a logistic rogression model
     OUTPUT: Plot of beta coefficients over increasing values of regularization param
     '''
     c_vals = np.logspace(3, -2, num=100)
@@ -138,13 +178,48 @@ def lasso_feature_selection(pipe):
     plt.legend()
     plt.show()
 
+def roc_curve(probabilities, labels, title):
+'''
+Plots ROC curve
+
+INPUT: array of probabilities, array of corresponding lablels, str
+OUTPUT: None, plots ROC curve
+'''
+
+    thresholds = np.sort(probabilities)
+
+    tprs = []
+    fprs = []
+
+    num_positive_cases = sum(labels)
+    num_negative_cases = len(labels) - num_positive_cases
+
+    for threshold in thresholds:
+
+        predicted_positive = probabilities >= threshold
+        true_positives = np.sum(predicted_positive * labels)
+        false_positives = np.sum(predicted_positive) - true_positives
+
+        tpr = true_positives / float(num_positive_cases)
+        fpr = false_positives / float(num_negative_cases)
+
+        fprs.append(fpr)
+        tprs.append(tpr)
+
+    plt.plot(fprs, tprs)
+
+    baseline = np.linspace(0,1, 1000)
+    plt.plot(baseline, baseline, '--', label=title)
+    plt.xlabel("False Positive Rate (1 - Specificity)")
+    plt.ylabel("True Positive Rate (Sensitivity, Recall)")
+
+
 if __name__ == '__main__':
     rideshare_df = pd.read_csv('data/churn.csv')
     rideshare_df = df_preprocessing(rideshare_df)
     y = rideshare_df.pop('Churned')
     X = rideshare_df
 
-    # drop these after lasso feature seelction
     X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
     X_train.reset_index(drop=True, inplace=True)
     y_train.reset_index(drop=True, inplace=True)
@@ -172,51 +247,40 @@ if __name__ == '__main__':
 
     feature_sets = [feature_set_all, feature_set_mid, feature_set_mid_miss]
 
-    # grid search
+    # grid search, optimized for f1
     # sklearn has an implementation, but preference is to script own
-    scores_dict = dict()
-    kf = KFold(n_splits=5, random_state=42)
-    for feature_set in feature_sets:
-        for penalty in penalties:
-            for c in c_vals:
+    # TODO: parallelize
 
-                pipe.named_steps['logit'].set_params(penalty=penalty)
-                pipe.named_steps['logit'].set_params(C=c)
+    # best_params is top 3 combos
+    best_params = grid_search(pipe, penalties, c_vals, feature_sets)
 
-                key = (penalty, c, tuple(feature_set))
-                print key
-                counter = 0
-                scores = []
+    print 'Best Parameters:'
+    for param in best_params[0]:
+        print param
 
-                for train_index, val_index in kf.split(X_train):
-                    counter += 1
-                    print counter
-                    train_set = X_train.loc[:, feature_set].copy()
-                    X_t, X_v = (train_set.iloc[train_index, :],
-                                train_set.iloc[val_index, :])
-                    y_t, y_v = y_train[train_index], y_train[val_index]
+    # train model w/ best params, optimized for f1 score
+    # compare roc curves for each set of params
+    # print params for each combo
 
-                    pipe.fit(X_t, y_t)
-                    score = pipe.score(X_v, y_v)
-                    scores.append(score)
+    for ind, params in enumerate(best_params):
+        print 'Training Model {}'.format(ind)
+        penalty, c_val, feature_set = params[0]
+        pipe.named_steps['features'].features = list(feature_set)
+        pipe.named_steps['logit'].set_params(penalty=penalty)
+        pipe.named_steps['logit'].set_params(C=c_val)
 
-                scores_dict[key] = np.mean(score)
+        pipe.fit(X_train.loc[:, feature_set], y_train)
+        final_score = pipe.score(X_test.loc[:, feature_set], y_test)
+        print 'test score for model {}: {}'.format(, indfinal_score)
 
-    best_params = max(scores_dict.items())
-    print best_params
-    penalty, c_val, feature_set = best_params[0]
+        final_coeffs = pipe.named_steps['logit'].coef_[0]
+        final_cols = pipe.named_steps['features'].columns
+        col_coef = sorted(zip(final_cols, final_coeffs), key=lambda x: abs(x[1]))
+        for col, coef in col_coef:
+            print col, coef
 
-    # train model w/ best params
-    pipe.named_steps['features'].features = list(feature_set)
-    pipe.named_steps['logit'].set_params(penalty=penalty)
-    pipe.named_steps['logit'].set_params(C=c_val)
+        probs = pipe.predict_proba(X_train)
+        roc_curve(probs[:, 1], y_train, 'Model {}'.format(ind))
 
-    pipe.fit(X_train.loc[:, feature_set], y_train)
-    final_score = pipe.score(X_test.loc[:, feature_set], y_test)
-
-    print 'test score: {}'.format(final_score)
-    final_coeffs = pipe.named_steps['logit'].coef_[0]
-    final_cols = pipe.named_steps['features'].columns
-    col_coef = sorted(zip(final_cols, final_coeffs), key=lambda x: abs(x[1]))
-    for col, coef in col_coef:
-        print col, coef
+    plt.legend()
+    plt.show()
